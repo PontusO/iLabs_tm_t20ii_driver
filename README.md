@@ -50,17 +50,14 @@ containing `*cupsModelNumber: 20`, which the current filter reads as a 20-pixel-
 Upstream uses CMake, which works fine. But it is a single C file, so plain gcc is enough:
 
 ```bash
-gcc -O2 -Wall -fPIC -o rastertozj rastertozj.c \
-    /usr/lib/x86_64-linux-gnu/libcups.so.2 \
-    /usr/lib/x86_64-linux-gnu/libcupsimage.so.2
+gcc -O2 -Wall -fPIC -o rastertozj rastertozj.c -lcups
 ```
 
-Requires the CUPS development headers (`libcups2-dev`, `libcupsimage2-dev`).
+Requires the CUPS development headers: `libcups2-dev` on Debian/Ubuntu, `libcups` on Arch.
 
-On CUPS 2.4 (Ubuntu 24.04) the raster API — `cupsRasterOpen`, `cupsRasterReadPixels` and
-friends — is merged into `libcups.so.2`, so the linker drops `libcupsimage` as unneeded. That
-is expected; verify with `nm -D --undefined-only rastertozj | grep -i raster` and a
-`LD_BIND_NOW=1` run.
+On CUPS 2.4 the raster API — `cupsRasterOpen`, `cupsRasterReadPixels` and friends — lives in
+`libcups.so.2`, so `-lcups` is all it needs. On older CUPS add `-lcupsimage`. Verify with
+`nm -D --undefined-only rastertozj | grep -i raster` and a `LD_BIND_NOW=1` run.
 
 The CMake route, if you prefer it:
 
@@ -128,10 +125,37 @@ printf 'test\n\n' | lp -d TM-T20II
 
 A healthy run leaves no `E` lines in `/var/log/cups/error_log`.
 
+## Troubleshooting
+
+### Output is enlarged ~2.5× and only the top-left corner prints
+
+Not a driver problem. Development snapshots of libcupsfilters 2.2.x before upstream commit
+[`fd1cb02e`](https://github.com/OpenPrinting/libcupsfilters/commit/fd1cb02e) ("add missing
+cfGetPageDimensions() in pdftopdf filter", October 2026) have a rewritten `pdftopdf` that never
+looks up the queue's page size. It lays every page out on its built-in default — A4 minus
+6.25 mm / 12.5 mm margins — and Ghostscript then renders only an 80 mm-wide corner of that.
+
+With `LogLevel debug`, the telltale is the same cell size on every job, whatever paper is
+selected:
+
+```
+iwidth=..., iheight=..., cwidth=559.843, cheight=771.024, rotate=...
+```
+
+On a fixed build `cwidth`/`cheight` follow the selected media (about 198 × 298 for 80 × 105 mm).
+
+Arch Linux hit this because `extra/libcupsfilters` ships a git snapshot
+(`2.2.1.r28.gce65eb74` had the bug). Rebuild the package from its PKGBUILD with the pinned
+commit moved to `fd1cb02e` or later, then `sudo systemctl restart cups`. A later `pacman -Syu`
+replaces the rebuild with whatever Arch ships, so re-check the log line after upgrades. Avoid
+`aur/libcupsfilters-duplexfix` at `d49e9284`: that is the commit just before the fix.
+
 ## Tested on
 
-Ubuntu 24.04, CUPS 2.4.7, Epson TM-T20II over LPD
-(`dnssd://EPSON%20TM-T20II%20(628DEA)._printer._tcp.local/`), 80 mm roll, 203 dpi.
+- Ubuntu 24.04, CUPS 2.4.7, Epson TM-T20II over LPD
+  (`dnssd://EPSON%20TM-T20II%20(628DEA)._printer._tcp.local/`), 80 mm roll, 203 dpi.
+- Arch Linux, CUPS 2.4.20, cups-filters 2.0.1, libcupsfilters rebuilt with the fix above,
+  Epson TM-T20II over USB, 80 mm roll, 203 dpi.
 
 ## License
 
